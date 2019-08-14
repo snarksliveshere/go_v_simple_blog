@@ -3,25 +3,33 @@ package main
 import (
 	"blog/models"
 	"fmt"
+	"html/template"
 	"net/http"
 
 	"github.com/codegangsta/martini"
 	"github.com/martini-contrib/render"
+	"github.com/russross/blackfriday"
 )
 
 var posts map[string]*models.Post
 var counter int
+
+func unescape(x string) interface{} {
+	return template.HTML(x)
+}
 
 func main() {
 	posts = make(map[string]*models.Post, 0)
 
 	m := martini.Classic()
 
+	unescFunc := template.FuncMap{"unescape": unescape}
+
 	m.Use(render.Renderer(render.Options{
 		Directory:  "templates",
 		Layout:     "layout",
 		Extensions: []string{".tmpl", ".html"},
-		//Funcs:           nil,
+		Funcs:      []template.FuncMap{unescFunc},
 		//Delims:          render.Delims{},
 		Charset:    "UTF-8",
 		IndentJSON: true,
@@ -40,14 +48,22 @@ func main() {
 
 	staticOptions := martini.StaticOptions{Prefix: "assets"}
 	m.Use(martini.Static("assets", staticOptions))
+
 	m.Get("/", indexHandler)
 	m.Get("/write", writeHandler)
-	m.Get("/edit", editHandler)
-	m.Post("/SavePost", savePostHandler)
-	m.Get("/delete", deleteHandler)
 	m.Get("/404", notFoundHandler)
+	m.Get("/edit/:id", editHandler)
+	m.Get("/delete/:id", deleteHandler)
+	m.Post("/SavePost", savePostHandler)
+	m.Post("/gethtml", getHtmlHandler)
 
 	m.Run()
+}
+
+func getHtmlHandler(rnd render.Render, r *http.Request) {
+	md := r.FormValue("md")
+	htmlBytes := blackfriday.MarkdownBasic([]byte(md))
+	rnd.JSON(200, map[string]interface{}{"html": string(htmlBytes)})
 }
 
 func notFoundHandler(rnd render.Render) {
@@ -72,8 +88,8 @@ func writeHandler(rnd render.Render) {
 //	t.ExecuteTemplate(w, "write", nil)
 //}
 
-func deleteHandler(rnd render.Render, r *http.Request) {
-	id := r.FormValue("id")
+func deleteHandler(rnd render.Render, r *http.Request, params martini.Params) {
+	id := params["id"]
 	if id == "" {
 		rnd.Redirect("/404")
 		//http.NotFound(w, r)
@@ -83,8 +99,8 @@ func deleteHandler(rnd render.Render, r *http.Request) {
 	//http.Redirect(w, r, "/", 302)
 }
 
-func editHandler(rnd render.Render, r *http.Request) {
-	id := r.FormValue("id")
+func editHandler(rnd render.Render, r *http.Request, params martini.Params) {
+	id := params["id"]
 	post, found := posts[id]
 	if !found {
 		// redirect to 404
@@ -99,16 +115,19 @@ func editHandler(rnd render.Render, r *http.Request) {
 func savePostHandler(rnd render.Render, r *http.Request) {
 	id := r.FormValue("id")
 	title := r.FormValue("title")
-	content := r.FormValue("content")
+	contentMarkdown := r.FormValue("content")
+
+	contentHTML := string(blackfriday.MarkdownBasic([]byte(contentMarkdown)))
 	var post *models.Post
 
 	if id != "" {
 		post = posts[id]
 		post.Title = title
-		post.Content = content
+		post.ContentHTML = contentHTML
+		post.ContentMarkdown = contentMarkdown
 	} else {
 		id = GenerateId()
-		post := models.NewPost(id, title, content)
+		post := models.NewPost(id, title, contentHTML, contentMarkdown)
 		posts[post.Id] = post
 	}
 

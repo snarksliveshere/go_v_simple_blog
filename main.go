@@ -20,7 +20,9 @@ func unescape(x string) interface{} {
 }
 
 func main() {
-	session, err := mgo.Dial("localhost")
+	//mongoConfig := "mongodb://root:example@localhost:27017/test?authMechanism=PLAIN"
+	mongoConfig := "mongodb://localhost:27017/test"
+	session, err := mgo.Dial(mongoConfig)
 	if err != nil {
 		panic(err)
 	}

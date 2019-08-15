@@ -19,7 +19,7 @@
         </form>
     </div>
     <div class="col-xs-6" id="md_html">
-        {{ .ContentHTML  }}
+        {{ .ContentHTML | unescape  }}
     </div>
 </div>
 <script src="/assets/js/write.js"></script>

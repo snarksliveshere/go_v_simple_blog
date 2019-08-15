@@ -1,6 +1,7 @@
 package main
 
 import (
+	"blog/db/documents"
 	"blog/models"
 	"fmt"
 	"html/template"
@@ -8,10 +9,10 @@ import (
 
 	"github.com/codegangsta/martini"
 	"github.com/martini-contrib/render"
-	"github.com/russross/blackfriday"
+	"github.com/tobyzxj/mgo"
 )
 
-var posts map[string]*models.Post
+var postsCollection *mgo.Collection
 var counter int
 
 func unescape(x string) interface{} {
@@ -19,7 +20,11 @@ func unescape(x string) interface{} {
 }
 
 func main() {
-	posts = make(map[string]*models.Post, 0)
+	session, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	postsCollection = session.DB("blog").C("posts")
 
 	m := martini.Classic()
 
@@ -62,20 +67,34 @@ func main() {
 
 func getHtmlHandler(rnd render.Render, r *http.Request) {
 	md := r.FormValue("md")
-	htmlBytes := blackfriday.MarkdownBasic([]byte(md))
-	rnd.JSON(200, map[string]interface{}{"html": string(htmlBytes)})
+	html := convertMarkDown(md)
+	rnd.JSON(200, map[string]interface{}{"html": html})
 }
 
 func notFoundHandler(rnd render.Render) {
-	rnd.HTML(200, "404", posts)
+	rnd.HTML(200, "404", nil)
 }
+
 func indexHandler(rnd render.Render) {
 	fmt.Println(counter)
+	var postsDocuments []documents.PostDocument
+	postsCollection.Find(nil).All(&postsDocuments)
+	var posts []models.Post
+	for _, doc := range postsDocuments {
+		post := models.Post{
+			Id:              doc.Id,
+			Title:           doc.Title,
+			ContentHTML:     doc.ContentHTML,
+			ContentMarkdown: doc.ContentMarkdown,
+		}
+		posts = append(posts, post)
+	}
 	rnd.HTML(200, "index", posts)
 }
 
 func writeHandler(rnd render.Render) {
-	rnd.HTML(200, "write", nil)
+	post := models.Post{}
+	rnd.HTML(200, "write", post)
 }
 
 //func writeHandler(w http.ResponseWriter, r *http.Request) {
@@ -94,22 +113,31 @@ func deleteHandler(rnd render.Render, r *http.Request, params martini.Params) {
 		rnd.Redirect("/404")
 		//http.NotFound(w, r)
 	}
-	delete(posts, id)
+	postsCollection.Remove(id)
 	rnd.Redirect("/")
 	//http.Redirect(w, r, "/", 302)
 }
 
 func editHandler(rnd render.Render, r *http.Request, params martini.Params) {
 	id := params["id"]
-	post, found := posts[id]
-	if !found {
+
+	var postDocument documents.PostDocument
+	err := postsCollection.FindId(id).One(&postDocument)
+
+	if err != nil {
 		// redirect to 404
 		rnd.Redirect("/404")
 		return
 		//http.NotFound(w, r)
 	}
+	post := models.Post{
+		Id:              postDocument.Id,
+		Title:           postDocument.Title,
+		ContentHTML:     postDocument.ContentHTML,
+		ContentMarkdown: postDocument.ContentMarkdown,
+	}
 	rnd.HTML(200, "write", post)
-	//t.ExecuteTemplate(w, "write", post)
+	//rnd.HTML(200, "write", postDocument)
 }
 
 func savePostHandler(rnd render.Render, r *http.Request) {
@@ -117,18 +145,15 @@ func savePostHandler(rnd render.Render, r *http.Request) {
 	title := r.FormValue("title")
 	contentMarkdown := r.FormValue("content")
 
-	contentHTML := string(blackfriday.MarkdownBasic([]byte(contentMarkdown)))
-	var post *models.Post
+	contentHTML := convertMarkDown(contentMarkdown)
+	postDocument := documents.PostDocument{id, title, contentHTML, contentMarkdown}
 
 	if id != "" {
-		post = posts[id]
-		post.Title = title
-		post.ContentHTML = contentHTML
-		post.ContentMarkdown = contentMarkdown
+		postsCollection.UpdateId(id, postDocument)
 	} else {
 		id = GenerateId()
-		post := models.NewPost(id, title, contentHTML, contentMarkdown)
-		posts[post.Id] = post
+		postDocument.Id = id
+		postsCollection.Insert(postDocument)
 	}
 
 	rnd.Redirect("/")
